@@ -29,7 +29,6 @@ set pitchy 0		;# value overridden from LEF file
 set trackskip 0		;# reduce number of implicit feedthroughs
 			;# to avoid routing congestion
 
-
 set arglen [llength $argv]
 set index 0
 while {$index < $arglen} {
@@ -51,6 +50,22 @@ while {$index < $arglen} {
 
 	--cel {
 	    set args(cel) [lindex $argv [incr index]]
+	}
+
+	--pad-config {
+	    set padconfig [lindex $argv [incr index]]
+	}
+
+	--vdd-net {
+	    set vddnet [lindex $argv [incr index]]
+	}
+
+	--gnd-net {
+	    set gndnet [lindex $argv [incr index]]
+	}
+
+	--force-power-net {
+	    set power_force 
 	}
 
 	default  {
@@ -88,6 +103,12 @@ if {[info exists args(cel)]} {
     exit
 }
 
+if {[info exists padconfig]} {
+   if {!([file exists $padconfig])} {
+      puts stderr "File $padconfig doesn't exist"
+      exit
+   }
+}
 
 #-------------------------------------------------------------
 
@@ -555,6 +576,8 @@ flush stdout
 set fnet [open $bliffile r]
 set mode none
 set i 0
+set hi 0
+
 while {[gets $fnet line] >= 0} {
     if [regexp {^[ \t]*\.gate[ \t]+([^ \t]+)[ \t]+(.*)$} $line lmatch macroname rest] {
 	set mode $macroname
@@ -625,6 +648,28 @@ while {[gets $fnet line] >= 0} {
 	    }
 	    flush stdout
 	}
+
+	if {[info exists power_force]} {
+		if {[info exists vddnet]} {
+			set pinx [set ${mode}(${vddnet},xp)]
+			set piny [set ${mode}(${vddnet},yp)]
+			set pinlayer [set ${mode}(${vddnet},layer)]
+			set pintype [set ${mode}(${vddnet},type)]
+			puts -nonewline $fcel "pin name $vddnet signal $vddnet layer "
+			puts $fcel "$pinlayer $pinx $piny"
+		}
+
+		if {[info exists gndnet]} {
+			set pinx [set ${mode}(${gndnet},xp)]
+			set piny [set ${mode}(${gndnet},yp)]
+			set pinlayer [set ${mode}(${gndnet},layer)]
+			set pintype [set ${mode}(${gndnet},type)]
+			puts -nonewline $fcel "pin name $gndnet signal $gndnet layer "
+			puts $fcel "$pinlayer $pinx $piny"
+		}
+	}
+
+
     } elseif [regexp {^[ \t]*\.inputs} $line lmatch] {
 	set mode "pins"
     } elseif [regexp {^[ \t]*\.outputs} $line lmatch] {
@@ -647,6 +692,41 @@ flush stdout
 
 set px [expr int($pitchx / 2)]
 set py [expr int($pitchy / 2)]
+set pmul 1
+
+set pad_fixed False
+array set pad_positions {}
+set placedpads {}
+set powerpads {}
+
+if {[info exists padconfig]} {
+	set pad_fixed True
+	set fpads [open $padconfig r]
+	while {[gets $fpads line] >= 0} {
+		if [regexp {^[ \t]*px:[ \t]+(.*)$} $line lmatch len] {
+			set px $len
+		}
+		if [regexp {^[ \t]*py:[ \t]+(.*)$} $line lmatch len] {
+			set py $len
+		}
+		if [regexp {^[ \t]*side[ \t]+(.*):[ \t]+(.*)$} $line lmatch side bank] {
+			foreach fixed_pad $bank {
+				set pad_positions($fixed_pad) $side
+			}
+		}
+		if [regexp {^[ \t]*power pads:[ \t]+(.*)$} $line lmatch ppads] {
+			foreach ppad $ppads {
+				lappend powerpads $ppad
+			}
+		}
+		if [regexp {^[ \t]*power multiplier:[ \t]+(.*)$} $line lmatch pfactor] {
+			set pmul $pfactor
+		}
+		if [regexp {^[ \t]*side space:[ \t]+(.*)$} $line lmatch len] {
+			set side_space $len
+		}
+	}
+}
 
 set fnet [open $bliffile r]
 set mode none
@@ -677,6 +757,18 @@ while {[gets $fnet line] >= 0} {
 	    incr padnum
 	}
     }
+}
+
+foreach pinname $powerpads {
+	for {set i 1} {$i <= $pmul} {incr i} {
+		foreach side [list "T" "L" "R" "B"] {
+			puts $fcel "pad $padnum name twpin_$side.$pinname<$i>"
+			puts $fcel "corners 4 -$px -$py -$px $py $px $py $px -$py  restrict side $side"
+			puts $fcel "pin name $pinname signal $pinname layer 1 0 0"
+			puts $fcel ""
+			incr padnum
+		}
+	}
 }
 
 puts stdout "Done!"
