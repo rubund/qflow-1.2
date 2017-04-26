@@ -8,6 +8,7 @@
 // Revision 3, 2013-10-09: Changed from BDnet2BSpice to
 //		blif2BSpice
 //
+// Revision 4, 2017-04-26: Handle .include statements in SPICE file
 //--------------------------------------------------------------
 
 #include <stdio.h>
@@ -140,10 +141,17 @@ int main (int argc, char *argv[])
    SIDE EFFECTS: 
 \*--------------------------------------------------------------*/
 
+typedef struct _linkedfile *LinkedFile;
+
+typedef struct _linkedfile {
+	LinkedFile next;
+	FILE *file;
+} linkedfile;
+
 void ReadNetlistAndConvert(FILE *netfile, FILE *libfile, FILE *outfile, 
 		char *vddnet, char *gndnet, char *subnet)
 {
-	int i, NumberOfInputs, NumberOfOutputs;
+	int i, result, NumberOfInputs, NumberOfOutputs;
 
 	char *lptr;
         char line[LengthOfLine];
@@ -154,6 +162,9 @@ void ReadNetlistAndConvert(FILE *netfile, FILE *libfile, FILE *outfile,
 	char InstanceName[LengthOfNodeName];
 	char InstancePortName[LengthOfNodeName];
 	char InstancePortWire[LengthOfNodeName];
+
+	LinkedFile filestack = NULL, newfile;
+	FILE *incfile;
 
 	subcircuitp subcktlib = NULL, tsub;
 	portrecp tport;
@@ -178,8 +189,40 @@ void ReadNetlistAndConvert(FILE *netfile, FILE *libfile, FILE *outfile,
 	    /* Read SPICE library of subcircuits, if one is specified.	*/
 	    /* Retain the name and order of ports passed to each	*/
 	    /* subcircuit.						*/
-	    while (loc_getline(line, sizeof(line), libfile) > 0) {
-		if (!strncasecmp(line, ".subckt", 7)) {
+	    while (1) {
+		result = loc_getline(line, sizeof(line), libfile);
+		if (result <= 0) {
+		    if (filestack == NULL) break;
+		    else {
+			fclose(libfile);
+			libfile = filestack->file;
+			newfile = filestack;
+			filestack = filestack->next;
+			free(newfile);
+		    }
+		}
+		else if (!strncasecmp(line, ".include", 8)) {
+		   /* Read filename */
+		   sp = line + 8;
+		   while (isspace(*sp) && (*sp != '\n')) sp++;
+		   sp2 = sp;
+		   while (!isspace(*sp2) && (*sp2 != '\n')) sp2++;
+		   *sp2 = '\0';
+
+		   incfile = fopen(sp, "r");
+		   if (incfile) {
+		       newfile = (LinkedFile)malloc(sizeof(struct _linkedfile));
+		       newfile->file = libfile;
+		       newfile->next = filestack;
+		       filestack = newfile;
+		       libfile = incfile;
+		   }
+		   else {
+		       fprintf(stderr,"Error: include file \"%s\" not found.\n", sp);
+		   }
+
+		}
+		else if (!strncasecmp(line, ".subckt", 7)) {
 		   /* Read cellname */
 		   sp = line + 7;
 		   while (isspace(*sp) && (*sp != '\n')) sp++;
@@ -275,7 +318,8 @@ void ReadNetlistAndConvert(FILE *netfile, FILE *libfile, FILE *outfile,
 		 fprintf(outfile, "");
 
 		 if (subcktlib != NULL) {
-		    /* Write out the subcircuit library file verbatim */
+		    /* Write out the subcircuit library file verbatim	 */
+		    /* (NOTE: .include statements are not followed here) */
 		    rewind(libfile);
 		    while (loc_getline(line, sizeof(line), libfile) > 0)
 		       fputs(line, outfile);
