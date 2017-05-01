@@ -49,6 +49,11 @@ ENDRULES
 *padspacing           : variable
 *rowSep		      : 0.0   0
 *track.pitch	      : 160
+*minimum_pad_space    : 240
+*gridX		      : 160
+*gridY		      : 200
+*gridOffsetX 	      : 0
+*gridOffsetY 	      : 0
 *graphics.wait        : off
 *last_chance.wait     : off
 *random.seed	      : 12345
